@@ -1,0 +1,11 @@
+This repository begins as a behavior-preserving extraction from Wozzits Engine:
+
+    https://github.com/brooteskan/wozzits
+
+Baseline source revision:
+
+    0ca3377dd5d9472a5a73426646026f2b085994e1
+
+The imported headers, legacy tests, and test-only Buffer retain their Wozzits
+copyright and MIT license. Packaging, baseline documentation, and additional
+characterization tests were added in this repository.

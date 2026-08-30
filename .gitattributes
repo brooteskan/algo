@@ -1,0 +1,8 @@
+* text=auto eol=lf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Preserve the imported Wozzits baseline byte-for-byte at the recorded hashes.
+include/algo/*.h -text whitespace=-trailing-space
+tests/algo/*.cpp -text whitespace=-trailing-space
+tests/support/containers/buffer.h -text whitespace=-trailing-space
