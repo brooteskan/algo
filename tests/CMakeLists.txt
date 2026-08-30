@@ -22,6 +22,7 @@ endfunction()
 
 add_algo_test_executable(algo_test_legacy algo/algo_test_1.cpp)
 add_algo_test_executable(algo_test_next algo/algo_test_next.cpp)
+add_algo_test_executable(algo_test_next_status algo/algo_test_next_status.cpp)
 add_algo_test_executable(algo_test_pipeline algo/algo_test_pipeline.cpp)
 add_algo_test_executable(algo_test_current_behavior baseline_current_behavior.cpp)
 
@@ -41,6 +42,7 @@ set_tests_properties(
 )
 
 add_test(NAME algo.baseline.next COMMAND algo_test_next)
+add_test(NAME algo.next.status COMMAND algo_test_next_status)
 add_test(NAME algo.baseline.pipeline COMMAND algo_test_pipeline)
 add_test(NAME algo.baseline.current_behavior COMMAND algo_test_current_behavior)
 
@@ -51,3 +53,5 @@ set_tests_properties(
     algo.baseline.current_behavior
     PROPERTIES LABELS baseline
 )
+
+set_tests_properties(algo.next.status PROPERTIES LABELS next)

@@ -1,149 +1,297 @@
 #pragma once
 
+#include <algorithm>
 #include <concepts>
 #include <functional>
-#include <iterator>
+#include <ranges>
+#include <tuple>
 #include <type_traits>
 #include <utility>
 
 namespace wz::core::algo::next
 {
-    /* readable range */
-    template<typename R>
-    concept ReadableRange =
-        requires(R r)
+    enum class execution_status
     {
-        { std::begin(r) };
-        { std::end(r) };
-        { *std::begin(r) };
+        completed,
+        truncated,
     };
 
-    /* transform sink */
+    [[nodiscard]] constexpr bool was_truncated(execution_status status) noexcept
+    {
+        return status == execution_status::truncated;
+    }
+
+    template<typename R>
+    concept ReadableRange = std::ranges::input_range<const R>;
+
     template<typename Out, typename InVal, typename F>
     concept CanTransformInto =
-        requires(Out o, F f, InVal v)
+        requires(Out& out, F& fn, InVal value)
     {
-        { std::invoke(f, v) };
-        { o.push(std::invoke(f, v)) } -> std::convertible_to<bool>;
+        { std::invoke(fn, value) };
+        { out.push(std::invoke(fn, value)) } -> std::convertible_to<bool>;
     };
 
-    /* transform */
+    namespace detail
+    {
+        template<ReadableRange In, typename Step>
+        execution_status consume_until_rejected(const In& in, Step&& step)
+        {
+            const auto rejected = std::ranges::find_if(
+                in,
+                [&step](auto&& value)
+                {
+                    return !static_cast<bool>(std::invoke(step, value));
+                });
+
+            return rejected == std::ranges::end(in)
+                ? execution_status::completed
+                : execution_status::truncated;
+        }
+    }
+
     template<ReadableRange In, typename Out, typename F>
         requires CanTransformInto<
             Out,
-                decltype(*std::begin(std::declval<In&>())),
-                F
+            std::ranges::range_reference_t<const In>,
+            F
         >
-    void transform(const In& in, Out& out, F&& fn)
+    execution_status transform(const In& in, Out& out, F&& fn)
     {
-        for (auto&& v : in)
-        {
-            if (!out.push(std::invoke(fn, v)))
+        return detail::consume_until_rejected(
+            in,
+            [&out, &fn](auto&& value)
             {
-                // policy: truncate
-                break;
-            }
-        }
+                return out.push(std::invoke(fn, value));
+            });
     }
 
-
-    /* filter */
     template<ReadableRange In, typename Out, typename Pred>
-        requires requires(Out o, decltype(*std::begin(std::declval<In&>())) v, Pred p)
+        requires requires(
+            Out& out,
+            std::ranges::range_reference_t<const In> value,
+            Pred& pred)
     {
-        { o.push(v) } -> std::convertible_to<bool>;
-        { std::invoke(p, v) } -> std::convertible_to<bool>;
+        { out.push(value) } -> std::convertible_to<bool>;
+        { std::invoke(pred, value) } -> std::convertible_to<bool>;
     }
-    void filter(const In& in, Out& out, Pred&& pred)
+    execution_status filter(const In& in, Out& out, Pred&& pred)
     {
-        for (auto&& v : in)
-        {
-            if (std::invoke(pred, v))
+        return detail::consume_until_rejected(
+            in,
+            [&out, &pred](auto&& value)
             {
-                if (!out.push(v))
-                    break;
-            }
-        }
+                return !std::invoke(pred, value) || out.push(value);
+            });
     }
 
-    /* reduce */
     template<ReadableRange In, typename T, typename F>
-        requires requires(T acc, decltype(*std::begin(std::declval<In&>())) v, F f)
+        requires requires(
+            T accumulator,
+            std::ranges::range_reference_t<const In> value,
+            F& fn)
     {
-        { std::invoke(f, acc, v) } -> std::convertible_to<T>;
+        { std::invoke(fn, accumulator, value) } -> std::convertible_to<T>;
     }
     T reduce(const In& in, T init, F&& fn)
     {
-        for (auto&& v : in)
-        {
-            init = std::invoke(fn, init, v);
-        }
+        std::ranges::for_each(
+            in,
+            [&init, &fn](auto&& value)
+            {
+                init = std::invoke(fn, init, value);
+            });
         return init;
     }
 
-    /* pipeline ops */
+    template<typename T>
+    concept PipelineOperation =
+        requires
+    {
+        typename std::remove_cvref_t<T>::pipeline_operation_tag;
+    };
+
+    template<typename... Ops>
+    struct pipeline_t
+    {
+        std::tuple<Ops...> ops;
+
+        template<ReadableRange In, typename Out>
+        execution_status operator()(const In& in, Out& out) const
+        {
+            return detail::consume_until_rejected(
+                in,
+                [this, &out](auto&& value)
+                {
+                    return apply_all(value, out);
+                });
+        }
+
+        template<typename Value, typename Out>
+        bool apply_all(Value&& value, Out& out) const
+        {
+            return apply_all_impl<0>(std::forward<Value>(value), out);
+        }
+
+        template<std::size_t Index, typename Value, typename Out>
+        bool apply_all_impl(Value&& value, Out& out) const
+        {
+            if constexpr (Index == sizeof...(Ops))
+            {
+                return out.push(std::forward<Value>(value));
+            }
+            else
+            {
+                const auto& operation = std::get<Index>(ops);
+                return operation.template apply<Index>(
+                    std::forward<Value>(value),
+                    out,
+                    *this);
+            }
+        }
+    };
+
     template<typename F>
     struct map_t
     {
+        using pipeline_operation_tag = void;
+
         F fn;
 
-        template<typename In, typename Out>
-        void operator()(const In& in, Out& out) const
+        template<ReadableRange In, typename Out>
+        execution_status operator()(const In& in, Out& out) const
         {
-            transform(in, out, fn);
+            return transform(in, out, fn);
+        }
+
+        template<std::size_t Index, typename Value, typename Out, typename Pipeline>
+        bool apply(Value&& value, Out& out, const Pipeline& pipeline) const
+        {
+            auto transformed = std::invoke(fn, std::forward<Value>(value));
+            return pipeline.template apply_all_impl<Index + 1>(
+                std::move(transformed),
+                out);
         }
     };
 
     template<typename P>
     struct filter_t
     {
+        using pipeline_operation_tag = void;
+
         P pred;
 
-        template<typename In, typename Out>
-        void operator()(const In& in, Out& out) const
+        template<ReadableRange In, typename Out>
+        execution_status operator()(const In& in, Out& out) const
         {
-            next::filter(in, out, pred);
+            return next::filter(in, out, pred);
+        }
+
+        template<std::size_t Index, typename Value, typename Out, typename Pipeline>
+        bool apply(Value&& value, Out& out, const Pipeline& pipeline) const
+        {
+            if (std::invoke(pred, value))
+            {
+                return pipeline.template apply_all_impl<Index + 1>(
+                    std::forward<Value>(value),
+                    out);
+            }
+            return true;
         }
     };
 
     template<typename F, typename P>
     struct map_filter_t
     {
+        using pipeline_operation_tag = void;
+
         F fn;
         P pred;
 
-        template<typename In, typename Out>
-        void operator()(const In& in, Out& out) const
+        template<ReadableRange In, typename Out>
+        execution_status operator()(const In& in, Out& out) const
         {
-            for (auto&& v : in)
-            {
-                auto x = std::invoke(fn, v);
-
-                if (std::invoke(pred, x))
+            return detail::consume_until_rejected(
+                in,
+                [this, &out](auto&& value)
                 {
-                    if (!out.push(std::move(x)))
-                        break;
-                }
+                    auto transformed = std::invoke(fn, value);
+                    return !std::invoke(pred, transformed)
+                        || out.push(std::move(transformed));
+                });
+        }
+
+        template<std::size_t Index, typename Value, typename Out, typename Pipeline>
+        bool apply(Value&& value, Out& out, const Pipeline& pipeline) const
+        {
+            auto transformed = std::invoke(fn, std::forward<Value>(value));
+            if (std::invoke(pred, transformed))
+            {
+                return pipeline.template apply_all_impl<Index + 1>(
+                    std::move(transformed),
+                    out);
             }
+            return true;
         }
     };
 
-    template<typename F, typename P>
-    map_filter_t<F, P> operator|(map_t<F> m, filter_t<P> f)
+    template<typename... Left, typename... Right>
+    auto operator|(pipeline_t<Left...> left, pipeline_t<Right...> right)
     {
-        return { m.fn, f.pred };
+        return pipeline_t<Left..., Right...>{
+            std::tuple_cat(std::move(left.ops), std::move(right.ops))
+        };
+    }
+
+    template<typename... Left, PipelineOperation Right>
+    auto operator|(pipeline_t<Left...> left, Right right)
+    {
+        return pipeline_t<Left..., std::decay_t<Right>>{
+            std::tuple_cat(
+                std::move(left.ops),
+                std::tuple<std::decay_t<Right>>{std::move(right)})
+        };
+    }
+
+    template<PipelineOperation Left, typename... Right>
+    auto operator|(Left left, pipeline_t<Right...> right)
+    {
+        return pipeline_t<std::decay_t<Left>, Right...>{
+            std::tuple_cat(
+                std::tuple<std::decay_t<Left>>{std::move(left)},
+                std::move(right.ops))
+        };
+    }
+
+    template<typename F, typename P>
+    auto operator|(map_t<F> map_operation, filter_t<P> filter_operation)
+    {
+        return map_filter_t<F, P>{
+            std::move(map_operation.fn),
+            std::move(filter_operation.pred)
+        };
+    }
+
+    template<PipelineOperation Left, PipelineOperation Right>
+    auto operator|(Left left, Right right)
+    {
+        return pipeline_t<std::decay_t<Left>, std::decay_t<Right>>{
+            std::tuple<std::decay_t<Left>, std::decay_t<Right>>{
+                std::move(left),
+                std::move(right)
+            }
+        };
     }
 
     template<typename F>
-    map_t<std::decay_t<F>> map(F&& f)
+    map_t<std::decay_t<F>> map(F&& fn)
     {
-        return { std::forward<F>(f) };
+        return {std::forward<F>(fn)};
     }
 
     template<typename P>
-    filter_t<std::decay_t<P>> filter(P&& p)
+    filter_t<std::decay_t<P>> filter(P&& pred)
     {
-        return { std::forward<P>(p) };
+        return {std::forward<P>(pred)};
     }
-
-} // namespace wz::core::algo::next
+}

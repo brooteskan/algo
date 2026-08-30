@@ -6,8 +6,10 @@ The imported files come from Wozzits `master` at:
 0ca3377dd5d9472a5a73426646026f2b085994e1
 ```
 
-They are intentionally unchanged. The test-only `containers/buffer.h` is not a
-public dependency of `algo::algo`.
+They are intentionally unchanged at the `v0.0.1-wozzits-baseline` tag. The
+hashes below describe that immutable tag; later development may modify working
+copies while retaining the baseline in Git history. The test-only
+`containers/buffer.h` is not a public dependency of `algo::algo`.
 
 ## Imported files
 

@@ -5,7 +5,9 @@ These are recorded rather than repaired in the initial extraction.
 ## Historical API generations
 
 `algo.h`, `ops.h`, `next.h`, and `pipeline.h` are successive prototypes with
-overlapping behavior. They remain separate in the baseline package.
+overlapping behavior. They remain separate at the baseline tag. Development on
+`main` treats `next.h` as canonical and moves required composition behavior
+there under focused tests.
 
 ## Apply composition expectation
 
@@ -19,6 +21,10 @@ and therefore fails against the current implementation.
 The older immediate and operation APIs may continue processing after an output
 sink rejects a value. The newer range/sink and pipeline APIs terminate. These
 differences require explicit characterization before consolidation.
+
+The canonical `next.h` API now reports `execution_status::truncated` when a
+sink rejects a value before range processing completes. Its per-element
+`apply_all` operation remains boolean so it can serve as a traversal sink.
 
 ## Header self-containment
 
