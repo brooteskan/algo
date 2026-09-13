@@ -63,10 +63,17 @@ polytree traversal sinks. The range-level operation converts that signal into
 ## Build and test
 
 ```sh
+git submodule update --init --recursive
 cmake -S . -B build -DALGO_BUILD_TESTS=ON
 cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
-Tests use an installed GTest package when available and otherwise fetch the
-pinned upstream GTest tag.
+Tests use the pinned GoogleTest submodule described below.
+
+## Pinned source dependencies
+
+Run `git submodule update --init --recursive` after cloning or changing revisions.
+Standalone tests build GoogleTest from the `external/googletest` gitlink. CMake
+requires that exact initialized revision; it does not fetch dependencies or use
+an installed GoogleTest package. No sibling-checkout paths are needed.
